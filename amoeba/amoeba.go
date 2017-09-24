@@ -5,7 +5,6 @@ import (
     "io"
     "log"
     "sync"
-    //"bytes"
     "strconv"
     "os/exec"
     "io/ioutil"
@@ -30,6 +29,13 @@ type Amoeba struct {
     docker *client.Client
 }
 
+// Stream ...
+type Stream struct {
+    Name string
+    Stdout io.Reader
+    Stderr io.Reader
+}
+
 // NewAmoeba ...
 func NewAmoeba() (*Amoeba, error) {
     docker, err := client.NewEnvClient()
@@ -44,7 +50,7 @@ func (a *Amoeba) Close() {
 }
 
 // StartDeploy ...
-func (a *Amoeba) StartDeploy(url string, group string) []error {
+func (a *Amoeba) StartDeploy(url string, group string) ([]*exec.Cmd, []Stream) {
     var wg sync.WaitGroup
 
     groupPath := filepath.Join(groupsDir, group)
@@ -81,6 +87,24 @@ func (a *Amoeba) StartDeploy(url string, group string) []error {
     wg.Wait()
 
     return startClients(clients, group)
+}
+
+// WaitDeploy ...
+func (a *Amoeba) WaitDeploy(cmds []*exec.Cmd) ([]error) {
+    var errs []error
+    for _, cmd := range cmds {
+        log.Println("Waiting for command from: " + cmd.Dir)
+        err := cmd.Wait()
+        if err != nil {
+            log.Println("Command had an error")
+            errs = append(errs, err)
+
+        } else {
+            log.Println("Command had no error")
+        }
+    }
+
+    return errs
 }
 
 // TearDownGroup ...
@@ -163,9 +187,10 @@ func setupClients(clients []string, repoName string, group string) {
     wg.Wait()
 }
 
-func startClients(clients []string, group string) []error {
+func startClients(clients []string, group string) ([]*exec.Cmd, []Stream) {
     var wg sync.WaitGroup
-    var errs []error
+    var streams []Stream
+    var cmds []*exec.Cmd
 
     path := filepath.Join(groupsDir, group)
 
@@ -175,13 +200,14 @@ func startClients(clients []string, group string) []error {
             defer wg.Done()
             repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
             log.Println("docker compose up on " + url)
-            err := dockerComposeUp(group, parseName(url), repoPath)
-            errs = append(errs, err)
+            cmd, stream := dockerComposeUp(group, parseName(url), repoPath)
+            streams = append(streams, stream)
+            cmds = append(cmds, cmd)
         }()
     }
 
     wg.Wait()
-    return errs
+    return cmds, streams
 }
 
 func parseName(url string) string {
@@ -189,7 +215,7 @@ func parseName(url string) string {
     return strings.Split(temp[len(temp) - 1], ".")[0]
 }
 
-func dockerComposeUp(group, repo, dir string) error {
+func dockerComposeUp(group, repo, dir string) (*exec.Cmd, Stream) {
     return dockerComposeOut(group, repo, dir, "up", "--abort-on-container-exit")
     // return dockerComposeOut(group, repo, dir, "up", "-d")
 }
@@ -198,21 +224,34 @@ func dockerComposeDown(dir string) error {
     return dockerCompose(dir, "down", "--remove-orphans")
 }
 
-func dockerComposeOut(group string, repo string, dir string, args ...string) error {
+// TODO pipe output to files and to websocket
+func dockerComposeOut(group string, repo string, dir string, args ...string) (*exec.Cmd, Stream) {
+    stream := Stream{}
+    stream.Name = repo
     path := filepath.Join(outDir, group, repo)
     utils.CheckDir(path)
 
-    stdout, err := os.Create(filepath.Join(path, "stdout"))
+    stdoutFile, err := os.Create(filepath.Join(path, "stdout"))
     utils.CheckError(err)
-    stderr, err := os.Create(filepath.Join(path, "stderr"))
+    stderrFile, err := os.Create(filepath.Join(path, "stderr"))
     utils.CheckError(err)
 
     cmd := exec.Command("docker-compose", args...)
     cmd.Dir = dir
-    cmd.Stdout = stdout
-    cmd.Stderr = stderr
 
-    return cmd.Run()
+    stdout, err := cmd.StdoutPipe()
+    utils.CheckError(err)
+    stderr, err := cmd.StderrPipe()
+    utils.CheckError(err)
+
+    stream.Stdout = stdout
+    stream.Stderr = stderr
+
+    err = cmd.Start()
+    go io.Copy(stdoutFile, stdout)
+    go io.Copy(stderrFile, stderr)
+    
+    return cmd, stream
 }
 
 func dockerCompose(dir string, args ...string) error {

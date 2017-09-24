@@ -19,54 +19,78 @@ import (
 const defaultMaxBuilds = 4
 
 var maxBuilds int64
-//var builds sync.Map
 var buildCount int64 = 0
 var mu sync.Mutex
 
-var upgrader = websocket.Upgrader{}
+var buildsMu sync.Mutex
 
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-    // TODO
-    if r.Method != http.MethodGet {
-        w.WriteHeader(http.StatusBadRequest)
-        return
-    }
-}
+var builds map[string][]amoeba.Stream
+var upgrader = websocket.Upgrader{}
 
 func handleOutput(w http.ResponseWriter, r *http.Request) {
     vars := mux.Vars(r)
     path := filepath.Join("./out", vars["buildID"], vars["clientRepo"])
-    if _, err := os.Stat(path); os.IsNotExist(err) {
-        w.WriteHeader(http.StatusNotFound)
-        return
-    }
-
-    file, err := os.Open(filepath.Join(path, vars["output"]))
-    if err != nil {
-        return
-    }
 
     conn, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
-        log.Fatal("Error: could not setup websocket")
         return
     }
     defer conn.Close()
 
-    // TODO this doesn't work right
-    buf := make([]byte, 1024)
-    done := false
-    for {
-        _, err = file.Read(buf)
-        if err != nil {
-            done = true
+    //buildsMu.Lock()
+    streams := builds[vars["buildID"]]
+
+    if streams == nil {
+        //buildsMu.Unlock()
+        log.Println("live build not available")
+        if _, err := os.Stat(path); os.IsNotExist(err) {
+            w.WriteHeader(http.StatusNotFound)
+        } else {
+            file, err := os.Open(filepath.Join(path, vars["output"]))
+            if err != nil {
+                w.WriteHeader(http.StatusNotFound)
+                return
+            }
+            copy(conn, file)
+            defer file.Close()
         }
 
-        err = conn.WriteMessage(websocket.TextMessage, buf)
-        if done {
-            break
+        return
+    }
+
+    log.Println("Getting live build")
+    for _, stream := range streams {
+        if stream.Name == vars["clientRepo"] {
+            if vars["output"] == "stdout" {
+                //buildsMu.Unlock()
+                copy(conn, stream.Stdout)
+                break
+            }
         }
     }
+}
+
+func copy(conn *websocket.Conn, r io.Reader) error {
+    log.Println("copying bytes to websocket")
+    buf := make([]byte, 1024)
+    for {
+        n, err := r.Read(buf)
+        log.Println(string(buf))
+        if err != nil && err != io.EOF {
+            return err
+        }
+
+        if n == 0 {
+            break
+        }
+
+        err = conn.WriteMessage(websocket.TextMessage, buf[:n])
+        if err != nil {
+            //return err
+        }
+    }
+
+    return nil
 }
 
 // Intended as a github push/pr event.
@@ -108,7 +132,11 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
         mu.Unlock()
     }
 
-    errs := a.StartDeploy(sshURL, group)
+    cmds, streams := a.StartDeploy(sshURL, group)
+    buildsMu.Lock()
+    builds[group] = streams
+    buildsMu.Unlock()
+    errs := a.WaitDeploy(cmds)
 
     isntError := true
     for _, err = range errs {
@@ -125,7 +153,9 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
     a.TearDownDeploy(group)
 
     log.Println("Finished testing: " + group)
-
+    buildsMu.Lock()
+    delete(builds, group)
+    buildsMu.Unlock()
     atomic.AddInt64(&buildCount, -1)
 }
 
@@ -148,9 +178,9 @@ func main() {
 
     log.Println("Maximum number of builds: " + strconv.FormatInt(maxBuilds, 10))
 
+    builds = make(map[string][]amoeba.Stream)
     router := mux.NewRouter()
 
-    router.HandleFunc("/", handleIndex)
     router.HandleFunc("/build", handleBuild)
     router.HandleFunc("/build/{buildID}/{clientRepo}/{output}", handleOutput)
 

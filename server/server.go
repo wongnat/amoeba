@@ -75,7 +75,7 @@ func copy(conn *websocket.Conn, r io.Reader) error {
     buf := make([]byte, 1024)
     for {
         n, err := r.Read(buf)
-        log.Println(string(buf))
+        //log.Println(string(buf))
         if err != nil && err != io.EOF {
             return err
         }

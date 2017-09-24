@@ -244,13 +244,19 @@ func dockerComposeOut(group string, repo string, dir string, args ...string) (*e
     stderr, err := cmd.StderrPipe()
     utils.CheckError(err)
 
-    stream.Stdout = stdout
-    stream.Stderr = stderr
+    outPr, outPw := io.Pipe()
+    outTr := io.TeeReader(stdout, outPw)
+
+    errPr, errPw := io.Pipe()
+    errTr := io.TeeReader(stderr, errPw)
+
+    stream.Stdout = outPr
+    stream.Stderr = errPr
 
     err = cmd.Start()
-    go io.Copy(stdoutFile, stdout)
-    go io.Copy(stderrFile, stderr)
-    
+    go io.Copy(stdoutFile, outTr)
+    go io.Copy(stderrFile, errTr)
+
     return cmd, stream
 }
 

@@ -21,41 +21,105 @@ const (
     defaultMaxBuilds = 4
 )
 
-var builds map[string][]amoeba.Output
+type outputMap {
+    Mut sync.Mutex
+    Map map[string]amoeba.Output
+}
 
-var buildsCount int64 = 0
+var builds map[string]outputMap
+
+var count int64 = 0
 var maxBuilds int64
 
-var buildsMu sync.Mutex
-var countMu sync.Mutex
+var buildsMut sync.Mutex
+var countMut  sync.Mutex
 
+func main() {
+    args   := os.Args
+    length := len(args)
+
+    if length < 2 || length > 3 {
+        log.Fatal("Error: unexpected number of arguments")
+    }
+
+    if length == 3 {
+        maxBuilds, err := strconv.ParseInt(args[2], 10, 64)
+        utils.CheckError(err)
+    } else {
+        maxBuilds = defaultMaxBuilds
+    }
+
+    builds = make(map[string]outputMap)
+
+    router := mux.NewRouter()
+    router.HandleFunc("/", handleRoot)
+    router.HandleFunc("/build", handleBuild)
+    router.HandleFunc("/build/ids", handleIds)
+    router.HandleFunc("/build/{id}/clients", handleClients)
+    router.HandleFunc("/build/{id}/{client}/{output}", handleOutput)
+
+    port := args[1]
+    log.Println("Amoeba server listening on port " + port + " ...")
+    http.ListenAndServe(":" + port, router)
+}
+
+func handleRoot(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func handleIds(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func handleClients(w http.ResponseWriter, r *http.Request) {
+
+}
+
+// Serves websocket of docker-compose output.
 func handleOutput(w http.ResponseWriter, r *http.Request) {
+    var upgrader = websocket.Upgrader{}
+
     vars := mux.Vars(r)
+    id   := vars["iD"]
+    cli  := vars["client"]
+    out  := vars["output"]
 
     // TODO check vars are legal
 
-    path := filepath.Join(logsDir, vars["buildID"], vars["clientRepo"])
-
-    var upgrader = websocket.Upgrader{}
+    path := filepath.Join(logsDir, id, cli)
     conn, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
         return
     }
     defer conn.Close()
 
-    outputs := builds[vars["buildID"]]
-
-    if outputs == nil {
-
-        log.Println("live build not available")
+    buildsMut.Lock()
+    outputMap := builds[id]
+    if outputMap != nil {
+        outputMap.Mut.Lock()
+        buildsMut.Unlock()
+        output := outputMap.Map[cli]
+        if output != nil {
+            outputMap.Mut.Unlock()
+            if out == "stdout" {
+                copy(conn, output.Stdout)
+            } else {
+                copy(conn, output.Stderr)
+            }
+        } else {
+            outputMap.Mut.Unlock()
+        }
+    } else {
+        buildsMut.Unlock()
         if _, err := os.Stat(path); os.IsNotExist(err) {
             w.WriteHeader(http.StatusNotFound)
         } else {
-            file, err := os.Open(filepath.Join(path, vars["output"]))
+            file, err := os.Open(filepath.Join(path, out))
             if err != nil {
                 w.WriteHeader(http.StatusNotFound)
                 return
             }
+
             copy(conn, file)
             defer file.Close()
         }
@@ -63,26 +127,12 @@ func handleOutput(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    log.Println("Getting live build")
-    for _, output := range outputs {
-        if output.Name == vars["clientRepo"] {
-            if vars["output"] == "stdout" {
-                copy(conn, output.Stdout)
-            } else {
-                copy(conn, output.Stderr)
-            }
-
-            break
-        }
-    }
-
-    buildsMu.Lock()
+    buildsMut.Lock()
     delete(builds, buildID)
-    buildsMu.Unlock()
+    buildsMut.Unlock()
 
-    atomic.AddInt64(&buildsCount, -1)
+    // atomic.AddInt64(&count, -1)
 }
-
 
 // Intended as a github push/pr event.
 func handleBuild(w http.ResponseWriter, r *http.Request) {
@@ -113,22 +163,27 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
     defer a.Close()
 
     for {
-        countMu.Lock()
+        countMut.Lock()
 
-        if atomic.LoadInt64(&buildsCount) < maxBuilds {
-            atomic.AddInt64(&buildsCount, 1)
-            countMu.Unlock()
-            break // Begin building
+        if count < maxBuilds {
+            count++
+            countMut.Unlock()
+            break
         }
 
-        countMu.Unlock()
+        countMut.Unlock()
     }
 
     outputs := a.Start()
 
-    buildsMu.Lock()
-    builds[buildID] = outputs
-    buildsMu.Unlock()
+    val := outputMap{}
+    for _, output := range outputs {
+        val[output.Name] = output
+    }
+
+    buildsMut.Lock()
+    builds[buildID] = val
+    buildsMut.Unlock()
 
     errs := a.Wait()
 
@@ -137,6 +192,7 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
         if err != nil {
             io.WriteString(w, "You broke at least one client repo\n")
             isntError = false
+            break
         }
     }
 
@@ -144,45 +200,14 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
         io.WriteString(w, "You didn't break anything! Yay!\n")
     }
 
+    countMut.Lock()
+    count--
+    countMut.Unlock()
+
     log.Println("Finished testing: " + buildID)
-
-    // buildsMu.Lock()
-    // delete(builds, buildID)
-    // buildsMu.Unlock()
-    //
-    // atomic.AddInt64(&buildsCount, -1)
 }
 
-func main() {
-    var err error
-
-    args := os.Args
-    length := len(args)
-
-    if length < 2 || length > 3 {
-        log.Fatal("Error: unexpected number of arguments")
-    }
-
-    if length == 3 {
-        maxBuilds, err = strconv.ParseInt(args[2], 10, 64)
-        utils.CheckError(err)
-    } else {
-        maxBuilds = defaultMaxBuilds
-    }
-
-    log.Println("Maximum number of builds: " + strconv.FormatInt(maxBuilds, 10))
-
-    builds = make(map[string][]amoeba.Output)
-    router := mux.NewRouter()
-
-    router.HandleFunc("/build", handleBuild)
-    router.HandleFunc("/build/{buildID}/{clientRepo}/{output}", handleOutput)
-
-    port := args[1]
-    log.Println("Amoeba listening on port " + port + " ...")
-    http.ListenAndServe(":" + port, router)
-}
-
+// Writes the contents of the given reader to the given websocket.
 func copy(conn *websocket.Conn, r io.Reader) error {
     buf := make([]byte, 1024)
     for {

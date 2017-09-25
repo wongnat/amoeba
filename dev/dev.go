@@ -10,8 +10,8 @@ import (
 )
 
 func main() {
-    //request()
-    local()
+    request()
+    //local()
 }
 
 func request() {

@@ -3,7 +3,6 @@ package amoeba
 import (
     "os"
     "io"
-    //"log"
     "sync"
     "strconv"
     "os/exec"
@@ -41,10 +40,10 @@ type Output struct {
 }
 
 // NewAmoeba ...
-func NewAmoeba(url string, id string) (*Amoeba, error) {
+func NewAmoeba(url string, commit string) (*Amoeba, error) {
     docker, err := client.NewEnvClient()
     ctx := context.Background()
-
+    id := repo.ParseName(url) + "-" + commit
     return &Amoeba{docker: docker, ctx: ctx, url: url, id: id}, err
 }
 
@@ -184,14 +183,6 @@ func (a *Amoeba) startClients(clients []string) ([]Output) {
 }
 
 func dockerComposeUp(id, repo, dir string) (*exec.Cmd, Output) {
-    return dockerComposeOut(id, repo, dir, "up", "--abort-on-container-exit")
-}
-
-func dockerComposeDown(dir string) error {
-    return dockerCompose(dir, "down", "--remove-orphans")
-}
-
-func dockerComposeOut(id string, repo string, dir string, args ...string) (*exec.Cmd, Output) {
     output := Output{}
     output.Name = repo
     path := filepath.Join(logsDir, id, repo)
@@ -202,7 +193,7 @@ func dockerComposeOut(id string, repo string, dir string, args ...string) (*exec
     stderrFile, err := os.Create(filepath.Join(path, "stderr"))
     utils.CheckError(err)
 
-    cmd := exec.Command("docker-compose", args...)
+    cmd := exec.Command("docker-compose", "up", "--abort-on-container-exit")
     cmd.Dir = dir
 
     stdout, err := cmd.StdoutPipe()
@@ -228,8 +219,8 @@ func dockerComposeOut(id string, repo string, dir string, args ...string) (*exec
     return cmd, output
 }
 
-func dockerCompose(dir string, args ...string) error {
-    cmd := exec.Command("docker-compose", args...)
+func dockerComposeDown(dir string) error {
+    cmd := exec.Command("docker-compose","down", "--remove-orphans")
     cmd.Dir = dir
 
     return cmd.Run()

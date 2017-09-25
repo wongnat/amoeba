@@ -44,7 +44,7 @@ func CloneRepo(url string, path string, commitID string) {
     }
 }
 
-// Returns a ptr to the newly created tar archive of the repo at the given path.
+// Returns the newly created tar archive of the repo at the given path.
 func ArchiveRepo(path string) *os.File {
     tar := new(archivex.TarFile)
     defer tar.Close()
@@ -58,6 +58,7 @@ func ArchiveRepo(path string) *os.File {
 }
 
 // Generate docker-compose.override.yml file at the given path.
+// TODO this will probably change
 func GenOverride(path string, repo string, image string) {
     file, err := os.Create(filepath.Join(path, "docker-compose.override.yml"))
     utils.CheckError(err)
@@ -73,6 +74,7 @@ func GenOverride(path string, repo string, image string) {
 }
 
 // Return list of client services github urls from amoeba.json file.
+// TODO this will probably change
 func ParseConfig(path string) []string {
     var jsonIn map[string]interface{}
     var clients []string
@@ -91,6 +93,7 @@ func ParseConfig(path string) []string {
     return clients
 }
 
+// Return the name of the repo given by the specified git ssh url.
 func ParseName(url string) string {
     temp := strings.Split(url, "/")
     return strings.Split(temp[len(temp) - 1], ".")[0]

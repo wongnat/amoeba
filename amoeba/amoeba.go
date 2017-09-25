@@ -3,7 +3,7 @@ package amoeba
 import (
     "os"
     "io"
-    "log"
+    //"log"
     "sync"
     "strconv"
     "os/exec"
@@ -66,20 +66,14 @@ func (a *Amoeba) Start() ([]Output) {
     utils.CheckDir(filepath.Join(logsDir, a.id))
 
     buildElements := strings.Split(a.id, "-")
-    repoName := buildElements[0]
-    commitID := buildElements[1]
+    repoName      := buildElements[0]
+    commitID      := buildElements[1]
+    targetPath    := filepath.Join(buildPath, "target")
 
-    // Clone target repo
-    log.Println("Cloning repository: " + repoName)
-    targetPath := filepath.Join(buildPath, "target")
     repo.CloneRepo(a.url, targetPath, commitID)
 
-    // Archive repo for docker build context
     buildContext := repo.ArchiveRepo(targetPath)
     defer buildContext.Close()
-
-    // Build image
-    log.Println("Building image: " + a.id)
 
     wg.Add(1)
     go func() {
@@ -99,9 +93,7 @@ func (a *Amoeba) Wait() ([]error) {
     var errs []error
 
     for _, cmd := range a.cmds {
-        log.Println("Waiting for cmd")
         err := cmd.Wait()
-        log.Println("Waiting done")
         if err != nil {
             errs = append(errs, err)
         }
@@ -118,20 +110,14 @@ func (a *Amoeba) Wait() ([]error) {
         }
     }
 
-    // Remove build build directory
-    log.Println("Removing build directory: " + a.id)
-    err = os.RemoveAll(buildPath) // Remove all files
+    err = os.RemoveAll(buildPath)
     utils.CheckError(err)
-
-    // Remove built image
-    log.Println("Removing image: " + a.id)
-    a.removeImage() // Remove built image
+    a.removeImage()
 
     return errs
 }
 
-// Builds the image from the given buildContext and assigns the image the
-// given name. User responsible for closing buildContext.
+// Builds the image from the given buildContext.
 func (a *Amoeba) buildImage(buildContext io.Reader) {
     opts := types.ImageBuildOptions{
         Tags: []string{a.id + ":latest"},
@@ -171,19 +157,15 @@ func (a *Amoeba) setupClients(clients []string, repoName string) {
     var wg sync.WaitGroup
 
     path := filepath.Join(buildsDir, a.id)
-
     for i, url := range clients {
         wg.Add(1)
         go func() {
             defer wg.Done()
             repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
-            log.Println("Cloning client repository: " + url)
             repo.CloneRepo(url, repoPath, "")
-            log.Println("Generating docker-compose.override.yml")
             repo.GenOverride(repoPath, repoName, a.id)
         }()
     }
-
     wg.Wait()
 }
 
@@ -191,13 +173,11 @@ func (a *Amoeba) startClients(clients []string) ([]Output) {
     var outputs []Output
 
     path := filepath.Join(buildsDir, a.id)
-
     for i, url := range clients {
         repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
-        log.Println("docker compose up on " + url)
         cmd, output := dockerComposeUp(a.id, repo.ParseName(url), repoPath)
         outputs = append(outputs, output)
-        a.cmds = append(a.cmds, cmd)
+        a.cmds  = append(a.cmds, cmd)
     }
 
     return outputs
@@ -205,7 +185,6 @@ func (a *Amoeba) startClients(clients []string) ([]Output) {
 
 func dockerComposeUp(id, repo, dir string) (*exec.Cmd, Output) {
     return dockerComposeOut(id, repo, dir, "up", "--abort-on-container-exit")
-    //return dockerComposeOut(id, repo, dir, "up", "-d")
 }
 
 func dockerComposeDown(dir string) error {

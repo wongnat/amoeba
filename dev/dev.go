@@ -2,7 +2,7 @@ package main
 
 import (
     "os"
-    //"io"
+    "io"
     "io/ioutil"
     "fmt"
     "net/http"
@@ -38,7 +38,7 @@ func local() {
     }
     defer a.Close()
 
-    a.Start()
-    // go io.Copy(os.Stdout, outputs[0].Stdout)
+    outputs := a.Start()
+    go io.Copy(os.Stdout, outputs[0].Stdout)
     a.Wait()
 }

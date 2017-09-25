@@ -44,8 +44,7 @@ func CloneRepo(url string, path string, commitID string) {
     }
 }
 
-// Returns a ptr to the newly created tar archive of the repo at
-// the given path.
+// Returns a ptr to the newly created tar archive of the repo at the given path.
 func ArchiveRepo(path string) *os.File {
     tar := new(archivex.TarFile)
     defer tar.Close()
@@ -109,7 +108,6 @@ func credentialsCallback(url string, username string, allowedTypes git.CredType)
     return git.ErrorCode(ret), &cred
 }
 
-// TODO
 func certificateCheckCallback(cert *git.Certificate, valid bool, hostname string) git.ErrorCode {
     return 0
 }

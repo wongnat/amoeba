@@ -18,30 +18,34 @@ import (
 )
 
 const (
-    amoebaGroup = "com.amoeba.group"
-    groupsDir = "./groups"
+    amoebaBuild = "com.amoeba.build"
     outDir = "./out"
+    buildsDir = "./out/builds"
+    logsDir   = "./out/logs"
 )
 
 // Amoeba ...
 type Amoeba struct {
-    ctx context.Context
     docker *client.Client
+    ctx context.Context
+    url string
+    id  string
+    cmds []*exec.Cmd
 }
 
-// Stream ...
-type Stream struct {
+// output ...
+type Output struct {
     Name string
     Stdout io.Reader
     Stderr io.Reader
 }
 
 // NewAmoeba ...
-func NewAmoeba() (*Amoeba, error) {
+func NewAmoeba(url string, id string) (*Amoeba, error) {
     docker, err := client.NewEnvClient()
     ctx := context.Background()
 
-    return &Amoeba{ctx, docker}, err
+    return &Amoeba{docker: docker, ctx: ctx, url: url, id: id}, err
 }
 
 // Close ...
@@ -49,95 +53,91 @@ func (a *Amoeba) Close() {
     a.docker.Close()
 }
 
-// StartDeploy ...
-func (a *Amoeba) StartDeploy(url string, group string) ([]*exec.Cmd, []Stream) {
+// Start ...
+func (a *Amoeba) Start() ([]Output) {
     var wg sync.WaitGroup
 
-    groupPath := filepath.Join(groupsDir, group)
+    buildPath := filepath.Join(buildsDir, a.id)
 
-    utils.CheckDir(groupsDir)
-    utils.CheckDir(groupPath)
     utils.CheckDir(outDir)
-    utils.CheckDir(filepath.Join(outDir, group))
+    utils.CheckDir(buildsDir)
+    utils.CheckDir(buildPath)
+    utils.CheckDir(logsDir)
+    utils.CheckDir(filepath.Join(logsDir, a.id))
 
-    groupElements := strings.Split(group, "-")
-    repoName := groupElements[0]
-    commitID := groupElements[1]
+    buildElements := strings.Split(a.id, "-")
+    repoName := buildElements[0]
+    commitID := buildElements[1]
 
     // Clone target repo
     log.Println("Cloning repository: " + repoName)
-    targetPath := filepath.Join(groupPath, "target")
-    repo.CloneRepo(url, targetPath, commitID)
+    targetPath := filepath.Join(buildPath, "target")
+    repo.CloneRepo(a.url, targetPath, commitID)
 
     // Archive repo for docker build context
     buildContext := repo.ArchiveRepo(targetPath)
     defer buildContext.Close()
 
     // Build image
-    log.Println("Building image: " + group)
+    log.Println("Building image: " + a.id)
 
     wg.Add(1)
     go func() {
         defer wg.Done()
-        a.buildImage(buildContext, group)
+        a.buildImage(buildContext)
     }()
 
     clients := repo.ParseConfig(targetPath)
-    setupClients(clients, repoName, group)
+    a.setupClients(clients, repoName)
     wg.Wait()
 
-    return startClients(clients, group)
+    return a.startClients(clients)
 }
 
-// WaitDeploy ...
-func (a *Amoeba) WaitDeploy(cmds []*exec.Cmd) ([]error) {
+// Wait ...
+func (a *Amoeba) Wait() ([]error) {
     var errs []error
-    for _, cmd := range cmds {
-        log.Println("Waiting for command from: " + cmd.Dir)
-        err := cmd.Wait()
-        if err != nil {
-            log.Println("Command had an error")
-            errs = append(errs, err)
 
-        } else {
-            log.Println("Command had no error")
+    for _, cmd := range a.cmds {
+        log.Println("Waiting for cmd")
+        err := cmd.Wait()
+        log.Println("Waiting done")
+        if err != nil {
+            errs = append(errs, err)
         }
     }
 
-    return errs
-}
-
-// TearDownGroup ...
-func (a *Amoeba) TearDownDeploy(group string) {
-    groupPath := filepath.Join(groupsDir, group)
-    dirs, err := ioutil.ReadDir(groupPath)
+    buildPath := filepath.Join(buildsDir, a.id)
+    dirs, err := ioutil.ReadDir(buildPath)
     utils.CheckError(err)
 
     for _, dir := range dirs {
         name := dir.Name()
         if strings.Contains(name, "client") {
-            dockerComposeDown(filepath.Join(groupPath, name))
+            dockerComposeDown(filepath.Join(buildPath, name))
         }
     }
 
-    // Remove group build directory
-    log.Println("Removing group directory: " + group)
-    err = os.RemoveAll(groupPath) // Remove all files
+    // Remove build build directory
+    log.Println("Removing build directory: " + a.id)
+    err = os.RemoveAll(buildPath) // Remove all files
     utils.CheckError(err)
 
     // Remove built image
-    log.Println("Removing image: " + group)
-    a.removeImage(group) // Remove built image
+    log.Println("Removing image: " + a.id)
+    a.removeImage() // Remove built image
+
+    return errs
 }
 
 // Builds the image from the given buildContext and assigns the image the
 // given name. User responsible for closing buildContext.
-func (a *Amoeba) buildImage(buildContext io.Reader, name string) {
+func (a *Amoeba) buildImage(buildContext io.Reader) {
     opts := types.ImageBuildOptions{
-        Tags: []string{name + ":latest"},
+        Tags: []string{a.id + ":latest"},
         Remove: true,
         ForceRemove: true,
-        Labels: map[string]string{amoebaGroup: name},
+        Labels: map[string]string{amoebaBuild: a.id},
     }
 
     res, err := a.docker.ImageBuild(a.ctx, buildContext, opts)
@@ -149,13 +149,13 @@ func (a *Amoeba) buildImage(buildContext io.Reader, name string) {
 }
 
 // Remove the image by the given name from the docker daemon.
-func (a *Amoeba) removeImage(name string) {
+func (a *Amoeba) removeImage() {
     options := types.ImageListOptions{All: true}
     images, err := a.docker.ImageList(a.ctx, options)
     utils.CheckError(err)
 
     for _, image := range images {
-        if image.Labels[amoebaGroup] == name {
+        if image.Labels[amoebaBuild] == a.id {
             opts := types.ImageRemoveOptions{
                 Force: true,
                 PruneChildren: true,
@@ -167,10 +167,10 @@ func (a *Amoeba) removeImage(name string) {
     }
 }
 
-func setupClients(clients []string, repoName string, group string) {
+func (a *Amoeba) setupClients(clients []string, repoName string) {
     var wg sync.WaitGroup
 
-    path := filepath.Join(groupsDir, group)
+    path := filepath.Join(buildsDir, a.id)
 
     for i, url := range clients {
         wg.Add(1)
@@ -180,55 +180,42 @@ func setupClients(clients []string, repoName string, group string) {
             log.Println("Cloning client repository: " + url)
             repo.CloneRepo(url, repoPath, "")
             log.Println("Generating docker-compose.override.yml")
-            repo.GenOverride(repoPath, repoName, group)
+            repo.GenOverride(repoPath, repoName, a.id)
         }()
     }
 
     wg.Wait()
 }
 
-func startClients(clients []string, group string) ([]*exec.Cmd, []Stream) {
-    var wg sync.WaitGroup
-    var streams []Stream
-    var cmds []*exec.Cmd
+func (a *Amoeba) startClients(clients []string) ([]Output) {
+    var outputs []Output
 
-    path := filepath.Join(groupsDir, group)
+    path := filepath.Join(buildsDir, a.id)
 
     for i, url := range clients {
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
-            log.Println("docker compose up on " + url)
-            cmd, stream := dockerComposeUp(group, parseName(url), repoPath)
-            streams = append(streams, stream)
-            cmds = append(cmds, cmd)
-        }()
+        repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
+        log.Println("docker compose up on " + url)
+        cmd, output := dockerComposeUp(a.id, repo.ParseName(url), repoPath)
+        outputs = append(outputs, output)
+        a.cmds = append(a.cmds, cmd)
     }
 
-    wg.Wait()
-    return cmds, streams
+    return outputs
 }
 
-func parseName(url string) string {
-    temp := strings.Split(url, "/")
-    return strings.Split(temp[len(temp) - 1], ".")[0]
-}
-
-func dockerComposeUp(group, repo, dir string) (*exec.Cmd, Stream) {
-    return dockerComposeOut(group, repo, dir, "up", "--abort-on-container-exit")
-    // return dockerComposeOut(group, repo, dir, "up", "-d")
+func dockerComposeUp(id, repo, dir string) (*exec.Cmd, Output) {
+    return dockerComposeOut(id, repo, dir, "up", "--abort-on-container-exit")
+    //return dockerComposeOut(id, repo, dir, "up", "-d")
 }
 
 func dockerComposeDown(dir string) error {
     return dockerCompose(dir, "down", "--remove-orphans")
 }
 
-// TODO pipe output to files and to websocket
-func dockerComposeOut(group string, repo string, dir string, args ...string) (*exec.Cmd, Stream) {
-    stream := Stream{}
-    stream.Name = repo
-    path := filepath.Join(outDir, group, repo)
+func dockerComposeOut(id string, repo string, dir string, args ...string) (*exec.Cmd, Output) {
+    output := Output{}
+    output.Name = repo
+    path := filepath.Join(logsDir, id, repo)
     utils.CheckDir(path)
 
     stdoutFile, err := os.Create(filepath.Join(path, "stdout"))
@@ -250,14 +237,16 @@ func dockerComposeOut(group string, repo string, dir string, args ...string) (*e
     errPr, errPw := io.Pipe()
     errTr := io.TeeReader(stderr, errPw)
 
-    stream.Stdout = outPr
-    stream.Stderr = errPr
+    output.Stdout = outTr
+    output.Stderr = errTr
 
     err = cmd.Start()
-    go io.Copy(stdoutFile, outTr)
-    go io.Copy(stderrFile, errTr)
+    utils.CheckError(err)
 
-    return cmd, stream
+    go io.Copy(stdoutFile, outPr)
+    go io.Copy(stderrFile, errPr)
+
+    return cmd, output
 }
 
 func dockerCompose(dir string, args ...string) error {

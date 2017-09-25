@@ -2,6 +2,7 @@ package repo
 
 import (
     "os"
+    "strings"
     "os/user"
     "encoding/json"
     "path/filepath"
@@ -89,6 +90,11 @@ func ParseConfig(path string) []string {
     }
 
     return clients
+}
+
+func ParseName(url string) string {
+    temp := strings.Split(url, "/")
+    return strings.Split(temp[len(temp) - 1], ".")[0]
 }
 
 func credentialsCallback(url string, username string, allowedTypes git.CredType) (git.ErrorCode, *git.Cred) {

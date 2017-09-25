@@ -2,16 +2,16 @@ package main
 
 import (
     "os"
+    //"io"
     "io/ioutil"
     "fmt"
     "net/http"
     "amoeba/amoeba"
-    //"github.com/gorilla/websocket"
 )
 
 func main() {
-    request()
-    //local()
+    //request()
+    local()
 }
 
 func request() {
@@ -32,13 +32,13 @@ func request() {
 }
 
 func local() {
-    a, err := amoeba.NewAmoeba()
+    a, err := amoeba.NewAmoeba("git@github.com:wongnat/dummy.git", "dummy-ed59cc75335f869d2378a79924332f17ca1beffa")
     if err != nil {
         panic(err)
     }
     defer a.Close()
 
-    a.StartDeploy("git@github.com:wongnat/dummy.git", "dummy-ed59cc75335f869d2378a79924332f17ca1beffa")
-
-    a.TearDownDeploy("dummy-ed59cc75335f869d2378a79924332f17ca1beffa")
+    a.Start()
+    // go io.Copy(os.Stdout, outputs[0].Stdout)
+    a.Wait()
 }

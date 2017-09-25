@@ -5,8 +5,7 @@ run-dev:
 	go run ./dev/dev.go
 
 clean:
-	rm -rf ./out/*
-	rm -rf ./groups/*
+	rm -rf ./out
 	./scripts/clean.sh
 
 test:

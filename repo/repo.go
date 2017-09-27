@@ -12,11 +12,11 @@ import (
 )
 
 // Clones the repo given by the url to the given path.
-// If commitID is not empty, that commit is checked out.
-func CloneRepo(url string, path string, commitID string) {
+// If sha is not empty, that commit is checked out.
+func Clone(url, sha, path string) {
     cbs := git.RemoteCallbacks{
-        CertificateCheckCallback: certificateCheckCallback,
-        CredentialsCallback: credentialsCallback,
+        CertificateCheckCallback: gitCert,
+        CredentialsCallback: gitCred,
     }
 
     cloneOpts := &git.CloneOptions{}
@@ -28,8 +28,8 @@ func CloneRepo(url string, path string, commitID string) {
     repo, err := git.Clone(url, path, cloneOpts)
     utils.CheckError(err)
 
-    if commitID != "" {
-        oid, err := git.NewOid(commitID)
+    if sha != "" {
+        oid, err := git.NewOid(sha)
         utils.CheckError(err)
 
         commit, err := repo.LookupCommit(oid)
@@ -45,9 +45,10 @@ func CloneRepo(url string, path string, commitID string) {
 }
 
 // Returns the newly created tar archive of the repo at the given path.
-func ArchiveRepo(path string) *os.File {
+func Archive(path string) *os.File {
     tar := new(archivex.TarFile)
     defer tar.Close()
+
     tar.Create(path)
     tar.AddAll(path, false)
 
@@ -58,8 +59,8 @@ func ArchiveRepo(path string) *os.File {
 }
 
 // Generate docker-compose.override.yml file at the given path.
-// TODO this will probably change
-func GenOverride(path string, repo string, image string) {
+// TODO: This function is not finalized
+func OverrideCompose(path, repo, image string) {
     file, err := os.Create(filepath.Join(path, "docker-compose.override.yml"))
     utils.CheckError(err)
 
@@ -74,7 +75,7 @@ func GenOverride(path string, repo string, image string) {
 }
 
 // Return list of client services github urls from amoeba.json file.
-// TODO this will probably change
+// TODO: This function is not finalized
 func ParseConfig(path string) []string {
     var jsonIn map[string]interface{}
     var clients []string
@@ -99,7 +100,8 @@ func ParseName(url string) string {
     return strings.Split(temp[len(temp) - 1], ".")[0]
 }
 
-func credentialsCallback(url string, username string, allowedTypes git.CredType) (git.ErrorCode, *git.Cred) {
+// Callback to generate git ssh credentials.
+func gitCred(url, username string, t git.CredType) (git.ErrorCode, *git.Cred) {
     usr, err := user.Current()
     utils.CheckError(err)
 
@@ -111,6 +113,8 @@ func credentialsCallback(url string, username string, allowedTypes git.CredType)
     return git.ErrorCode(ret), &cred
 }
 
-func certificateCheckCallback(cert *git.Certificate, valid bool, hostname string) git.ErrorCode {
+// Callback to validate certificates
+// TODO: this function is not finalized
+func gitCert(cert *git.Certificate, valid bool, host string) git.ErrorCode {
     return 0
 }

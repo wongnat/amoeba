@@ -16,23 +16,23 @@ import (
     "amoeba/utils"
 )
 
+// TODO: write good comments
+
 const (
     amoebaBuild = "com.amoeba.build"
-    outDir = "./out"
-    buildsDir = "./out/builds"
-    logsDir   = "./out/logs"
 )
 
 // Amoeba ...
 type Amoeba struct {
-    docker *client.Client
+    cli *client.Client
     ctx context.Context
     url string
-    id  string
+    bid string
+    dir string
     cmds []*exec.Cmd
 }
 
-// output ...
+// Output ...
 type Output struct {
     Name string
     Stdout io.Reader
@@ -40,38 +40,43 @@ type Output struct {
 }
 
 // NewAmoeba ...
-func NewAmoeba(url string, commit string) (*Amoeba, error) {
+func NewAmoeba(url, sha, dir string) (*Amoeba, error) {
     docker, err := client.NewEnvClient()
+
+    bid := repo.ParseName(url) + "-" + sha
     ctx := context.Background()
-    id := repo.ParseName(url) + "-" + commit
-    return &Amoeba{docker: docker, ctx: ctx, url: url, id: id}, err
+
+    a := Amoeba{
+        cli: docker,
+        ctx: ctx,
+        url: url,
+        bid: bid,
+        dir: dir,
+    }
+
+    return &a, err
 }
 
 // Close ...
 func (a *Amoeba) Close() {
-    a.docker.Close()
+    a.cli.Close()
 }
 
 // Start ...
 func (a *Amoeba) Start() ([]Output) {
     var wg sync.WaitGroup
 
-    buildPath := filepath.Join(buildsDir, a.id)
+    buildPath := filepath.Join(a.dir, a.bid)
 
-    utils.CheckDir(outDir)
-    utils.CheckDir(buildsDir)
+    utils.CheckDir(a.dir)
     utils.CheckDir(buildPath)
-    utils.CheckDir(logsDir)
-    utils.CheckDir(filepath.Join(logsDir, a.id))
 
-    buildElements := strings.Split(a.id, "-")
-    repoName      := buildElements[0]
-    commitID      := buildElements[1]
-    targetPath    := filepath.Join(buildPath, "target")
+    sha  := strings.Split(a.bid, "-")[1]
+    dest := filepath.Join(buildPath, "target")
 
-    repo.CloneRepo(a.url, targetPath, commitID)
+    repo.Clone(a.url, sha, dest)
 
-    buildContext := repo.ArchiveRepo(targetPath)
+    buildContext := repo.Archive(dest)
     defer buildContext.Close()
 
     wg.Add(1)
@@ -80,8 +85,8 @@ func (a *Amoeba) Start() ([]Output) {
         a.buildImage(buildContext)
     }()
 
-    clients := repo.ParseConfig(targetPath)
-    a.setupClients(clients, repoName)
+    clients := repo.ParseConfig(dest)
+    a.setupClients(clients)
     wg.Wait()
 
     return a.startClients(clients)
@@ -98,7 +103,7 @@ func (a *Amoeba) Wait() ([]error) {
         }
     }
 
-    buildPath := filepath.Join(buildsDir, a.id)
+    buildPath := filepath.Join(a.dir, a.bid)
     dirs, err := ioutil.ReadDir(buildPath)
     utils.CheckError(err)
 
@@ -119,13 +124,13 @@ func (a *Amoeba) Wait() ([]error) {
 // Builds the image from the given buildContext.
 func (a *Amoeba) buildImage(buildContext io.Reader) {
     opts := types.ImageBuildOptions{
-        Tags: []string{a.id + ":latest"},
+        Tags: []string{a.bid + ":latest"},
         Remove: true,
         ForceRemove: true,
-        Labels: map[string]string{amoebaBuild: a.id},
+        Labels: map[string]string{amoebaBuild: a.bid},
     }
 
-    res, err := a.docker.ImageBuild(a.ctx, buildContext, opts)
+    res, err := a.cli.ImageBuild(a.ctx, buildContext, opts)
     utils.CheckError(err)
     defer res.Body.Close()
 
@@ -135,46 +140,52 @@ func (a *Amoeba) buildImage(buildContext io.Reader) {
 
 // Remove the image by the given name from the docker daemon.
 func (a *Amoeba) removeImage() {
-    options := types.ImageListOptions{All: true}
-    images, err := a.docker.ImageList(a.ctx, options)
+    options     := types.ImageListOptions{All: true}
+    images, err := a.cli.ImageList(a.ctx, options)
     utils.CheckError(err)
 
     for _, image := range images {
-        if image.Labels[amoebaBuild] == a.id {
+        if image.Labels[amoebaBuild] == a.bid {
             opts := types.ImageRemoveOptions{
                 Force: true,
                 PruneChildren: true,
             }
 
-            _, err := a.docker.ImageRemove(a.ctx, image.ID, opts)
+            _, err := a.cli.ImageRemove(a.ctx, image.ID, opts)
             utils.CheckError(err)
         }
     }
 }
 
-func (a *Amoeba) setupClients(clients []string, repoName string) {
+func (a *Amoeba) setupClients(clients []string) {
     var wg sync.WaitGroup
 
-    path := filepath.Join(buildsDir, a.id)
+    path := filepath.Join(a.dir, a.bid)
+    name := strings.Split(a.bid, "-")[0]
+
     for i, url := range clients {
         wg.Add(1)
         go func() {
             defer wg.Done()
             repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
-            repo.CloneRepo(url, repoPath, "")
-            repo.GenOverride(repoPath, repoName, a.id)
+
+            repo.Clone(url, "", repoPath)
+            repo.OverrideCompose(repoPath, name, a.bid)
         }()
     }
+
     wg.Wait()
 }
 
 func (a *Amoeba) startClients(clients []string) ([]Output) {
     var outputs []Output
 
-    path := filepath.Join(buildsDir, a.id)
+    path := filepath.Join(a.dir, a.bid)
+
     for i, url := range clients {
-        repoPath := filepath.Join(path, "client" + strconv.Itoa(i))
-        cmd, output := dockerComposeUp(a.id, repo.ParseName(url), repoPath)
+        repoPath    := filepath.Join(path, "client" + strconv.Itoa(i))
+        cmd, output := dockerComposeUp(a.bid, repo.ParseName(url), repoPath)
+
         outputs = append(outputs, output)
         a.cmds  = append(a.cmds, cmd)
     }
@@ -185,15 +196,8 @@ func (a *Amoeba) startClients(clients []string) ([]Output) {
 func dockerComposeUp(id, repo, dir string) (*exec.Cmd, Output) {
     output := Output{}
     output.Name = repo
-    path := filepath.Join(logsDir, id, repo)
-    utils.CheckDir(path)
 
-    stdoutFile, err := os.Create(filepath.Join(path, "stdout"))
-    utils.CheckError(err)
-    stderrFile, err := os.Create(filepath.Join(path, "stderr"))
-    utils.CheckError(err)
-
-    cmd := exec.Command("docker-compose", "up", "--abort-on-container-exit")
+    cmd := exec.Command("docker-compose", "up", "-d" /*"--abort-on-container-exit"*/)
     cmd.Dir = dir
 
     stdout, err := cmd.StdoutPipe()
@@ -201,20 +205,11 @@ func dockerComposeUp(id, repo, dir string) (*exec.Cmd, Output) {
     stderr, err := cmd.StderrPipe()
     utils.CheckError(err)
 
-    outPr, outPw := io.Pipe()
-    outTr := io.TeeReader(stdout, outPw)
-
-    errPr, errPw := io.Pipe()
-    errTr := io.TeeReader(stderr, errPw)
-
-    output.Stdout = outTr
-    output.Stderr = errTr
+    output.Stdout = stdout
+    output.Stderr = stderr
 
     err = cmd.Start()
     utils.CheckError(err)
-
-    go io.Copy(stdoutFile, outPr)
-    go io.Copy(stderrFile, errPr)
 
     return cmd, output
 }

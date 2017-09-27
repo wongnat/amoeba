@@ -5,7 +5,7 @@ run-dev:
 	go run ./dev/dev.go
 
 run-cli:
-	go run ./cli/main.go git@github.com:wongnat/dummy.git ed59cc75335f869d2378a79924332f17ca1beffa
+	go run ./cli/cli.go git@github.com:wongnat/dummy.git ed59cc75335f869d2378a79924332f17ca1beffa ./cli
 
 clean:
 	rm -rf ./out

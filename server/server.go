@@ -26,6 +26,7 @@ type outputMap {
     Map map[string]amoeba.Output
 }
 
+// TODO make concurrent
 var builds map[string]outputMap
 
 var count int64 = 0
@@ -100,6 +101,24 @@ func handleOutput(w http.ResponseWriter, r *http.Request) {
         buildsMut.Unlock()
         output := outputMap.Map[cli]
         if output != nil {
+
+            path := filepath.Join(logsDir, id, repo)
+            utils.CheckDir(path)
+
+            stdoutFile, err := os.Create(filepath.Join(path, "stdout"))
+            utils.CheckError(err)
+            stderrFile, err := os.Create(filepath.Join(path, "stderr"))
+            utils.CheckError(err)
+
+            outPr, outPw := io.Pipe()
+            outTr := io.TeeReader(stdout, outPw)
+
+            errPr, errPw := io.Pipe()
+            errTr := io.TeeReader(stderr, errPw)
+
+            go io.Copy(stdoutFile, outPr)
+            go io.Copy(stderrFile, errPr)
+
             outputMap.Mut.Unlock()
             if out == "stdout" {
                 copy(conn, output.Stdout)

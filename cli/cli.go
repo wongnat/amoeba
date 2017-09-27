@@ -10,18 +10,23 @@ import (
 )
 
 func main() {
-    args := os.Args
-    n := len(args)
+    var url string
+    var sha string
+    var dir string
 
-    if n < 2 || n > 3 {
-        fmt.Println("Usage: amoeba <ssh-url> <commit-sha>")
+    args := os.Args
+    n    := len(args)
+
+    if n != 4 {
+        fmt.Println("Usage: amoeba <build-dir> <ssh-url> <commit-sha>")
         return
     }
 
-    url    := args[1]
-    commit := args[2]
+    url = args[1]
+    sha = args[2]
+    dir = args[3]
 
-    a, err := amoeba.NewAmoeba(url, commit)
+    a, err := amoeba.NewAmoeba(url, sha, dir)
     utils.CheckError(err)
     defer a.Close()
 
@@ -32,16 +37,16 @@ func main() {
 
     errs := a.Wait()
 
-    success := true
+    passed := true
     for _, err = range errs {
         if err != nil {
-            success = false
+            passed = false
             break
         }
     }
 
-    msg := repo.ParseName(url) + " at commit " + commit
-    if success {
+    msg := repo.ParseName(url) + " at commit " + sha
+    if passed {
         fmt.Println(msg + " PASSED")
     } else {
         fmt.Println(msg + " FAILED")

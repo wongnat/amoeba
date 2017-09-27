@@ -20,6 +20,7 @@ func CheckError(err error) {
 }
 
 // Catches the error that caused a panic and returns the err.
+// TODO: haven't implemented error handling yet.
 func HandleError() error {
     if err := recover(); err != nil {
         return err.(error)

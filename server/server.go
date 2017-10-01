@@ -16,24 +16,14 @@ import (
     "github.com/gorilla/mux"
 )
 
-const (
-    logsDir = "./logs"
-    defaultMaxBuilds = 4
-)
+const defaultMaxBuilds = 8
 
-type outputMap {
-    Mut sync.Mutex
-    Map map[string]amoeba.Output
-}
+var builds outputMap   // global adt to store/serve amoeba.Output
+var maxBuilds int      // maximmum number of bilds that can occur
+var count int          // current number of active builds
+var countMu sync.Mutex // mutex to control updating/testing count
 
-// TODO make concurrent
-var builds map[string]outputMap
-
-var count int64 = 0
-var maxBuilds int64
-
-var buildsMut sync.Mutex
-var countMut  sync.Mutex
+var upgrader = websocket.Upgrader{} // upgrade http conn to websocket
 
 func main() {
     args   := os.Args
@@ -44,113 +34,60 @@ func main() {
     }
 
     if length == 3 {
-        maxBuilds, err := strconv.ParseInt(args[2], 10, 64)
+        maxBuilds, err := strconv.ParseInt(args[2], 10, 0)
         utils.CheckError(err)
     } else {
         maxBuilds = defaultMaxBuilds
     }
 
-    builds = make(map[string]outputMap)
+    builds = newOutputMap()
 
     router := mux.NewRouter()
-    router.HandleFunc("/", handleRoot)
-    router.HandleFunc("/build", handleBuild)
-    router.HandleFunc("/build/ids", handleIds)
-    router.HandleFunc("/build/{id}/clients", handleClients)
-    router.HandleFunc("/build/{id}/{client}/{output}", handleOutput)
+    router.HandleFunc("/build", handleBuild) // post only
+    router.HandleFunc("/build/ids", handleIds) // json
+    router.HandleFunc("/build/{id}/clients", handleClients) // json
+    router.HandleFunc("/build/{id}/{client}/stdout", handleOutput) // websocket, plain text
 
     port := args[1]
     log.Println("Amoeba server listening on port " + port + " ...")
     http.ListenAndServe(":" + port, router)
 }
 
-func handleRoot(w http.ResponseWriter, r *http.Request) {
-
-}
-
 func handleIds(w http.ResponseWriter, r *http.Request) {
-
+    buildIds := builds.TopKeys()
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOk)
+    json.NewEncoder(w).Encode(buildIds)
 }
 
 func handleClients(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    id   := vars["id"]
 
+    clients := builds.BotKeys(id)
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOk)
+    json.NewEncoder(w).Encode(clients)
 }
 
-// Serves websocket of docker-compose output.
+// Serves websocket of docker-compose stdout.
 func handleOutput(w http.ResponseWriter, r *http.Request) {
-    var upgrader = websocket.Upgrader{}
-
     vars := mux.Vars(r)
-    id   := vars["iD"]
+    id   := vars["id"]
     cli  := vars["client"]
-    out  := vars["output"]
 
-    // TODO check vars are legal
-
-    path := filepath.Join(logsDir, id, cli)
     conn, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
         return
     }
     defer conn.Close()
 
-    buildsMut.Lock()
-    outputMap := builds[id]
-    if outputMap != nil {
-        outputMap.Mut.Lock()
-        buildsMut.Unlock()
-        output := outputMap.Map[cli]
-        if output != nil {
-
-            path := filepath.Join(logsDir, id, repo)
-            utils.CheckDir(path)
-
-            stdoutFile, err := os.Create(filepath.Join(path, "stdout"))
-            utils.CheckError(err)
-            stderrFile, err := os.Create(filepath.Join(path, "stderr"))
-            utils.CheckError(err)
-
-            outPr, outPw := io.Pipe()
-            outTr := io.TeeReader(stdout, outPw)
-
-            errPr, errPw := io.Pipe()
-            errTr := io.TeeReader(stderr, errPw)
-
-            go io.Copy(stdoutFile, outPr)
-            go io.Copy(stderrFile, errPr)
-
-            outputMap.Mut.Unlock()
-            if out == "stdout" {
-                copy(conn, output.Stdout)
-            } else {
-                copy(conn, output.Stderr)
-            }
-        } else {
-            outputMap.Mut.Unlock()
-        }
-    } else {
-        buildsMut.Unlock()
-        if _, err := os.Stat(path); os.IsNotExist(err) {
-            w.WriteHeader(http.StatusNotFound)
-        } else {
-            file, err := os.Open(filepath.Join(path, out))
-            if err != nil {
-                w.WriteHeader(http.StatusNotFound)
-                return
-            }
-
-            copy(conn, file)
-            defer file.Close()
-        }
-
+    out := builds.Load(id, cli)
+    if out == nil {
         return
     }
 
-    buildsMut.Lock()
-    delete(builds, buildID)
-    buildsMut.Unlock()
-
-    // atomic.AddInt64(&count, -1)
+    copy(conn, output.Stdout)
 }
 
 // Intended as a github push/pr event.
@@ -175,75 +112,51 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
     buildID := repoName + "-" + commitID
     log.Println("Received request to test: " + buildID)
 
-    a, err := amoeba.NewAmoeba(sshURL, buildID)
+    a, err := amoeba.NewAmoeba(sshURL, buildID, "./server/builds")
     if err != nil {
         panic(err)
     }
     defer a.Close()
 
-    for {
-        countMut.Lock()
-
+    for { // Block until the number of in-progress builds is < maxBuilds
+        countMu.Lock()
         if count < maxBuilds {
             count++
-            countMut.Unlock()
+            countMu.Unlock()
             break
         }
-
-        countMut.Unlock()
+        countMu.Unlock()
     }
 
     outputs := a.Start()
 
-    val := outputMap{}
+    // Build an inner map for our outputMap
+    val := make(map[string]amoeba.Output)
     for _, output := range outputs {
         val[output.Name] = output
     }
 
-    buildsMut.Lock()
-    builds[buildID] = val
-    buildsMut.Unlock()
-
+    builds.Insert(buildID, val)
     errs := a.Wait()
 
-    isntError := true
+    // Look for errors
+    passed := true
     for _, err = range errs {
         if err != nil {
-            io.WriteString(w, "You broke at least one client repo\n")
-            isntError = false
+            passed = false
             break
         }
     }
 
-    if isntError {
+    if passed {
         io.WriteString(w, "You didn't break anything! Yay!\n")
+    } else {
+        io.WriteString(w, "You broke at least one client repo\n")
     }
 
-    countMut.Lock()
+    countMu.Lock()
     count--
-    countMut.Unlock()
+    countMu.Unlock()
 
     log.Println("Finished testing: " + buildID)
-}
-
-// Writes the contents of the given reader to the given websocket.
-func copy(conn *websocket.Conn, r io.Reader) error {
-    buf := make([]byte, 1024)
-    for {
-        n, err := r.Read(buf)
-        if err != nil && err != io.EOF {
-            return err
-        }
-
-        if n == 0 {
-            break
-        }
-
-        err = conn.WriteMessage(websocket.TextMessage, buf[:n])
-        if err != nil {
-            return err
-        }
-    }
-
-    return nil
 }

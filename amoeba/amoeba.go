@@ -197,7 +197,7 @@ func dockerComposeUp(id, repo, dir string) (*exec.Cmd, Output) {
     output := Output{}
     output.Name = repo
 
-    cmd := exec.Command("docker-compose", "up", "-d" /*"--abort-on-container-exit"*/)
+    cmd := exec.Command("docker-compose", "up", "--abort-on-container-exit")
     cmd.Dir = dir
 
     stdout, err := cmd.StdoutPipe()

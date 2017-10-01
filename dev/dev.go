@@ -6,12 +6,19 @@ import (
     "io/ioutil"
     "fmt"
     "net/http"
-    "amoeba/amoeba"
+    "amoeba/lib"
+    "amoeba/repo"
 )
 
 func main() {
-    request()
+    testyml()
+    //request()
     //local()
+}
+
+func testyml() {
+    // fmt.Println(repo.ParseConfig("./dev"))
+    repo.OverrideCompose("./dev", "dummy", "dummy-ed59cc75335f869d2378a79924332f17ca1beffa")
 }
 
 func request() {
@@ -32,7 +39,7 @@ func request() {
 }
 
 func local() {
-    a, err := amoeba.NewAmoeba("git@github.com:wongnat/dummy.git", "dummy-ed59cc75335f869d2378a79924332f17ca1beffa")
+    a, err := lib.NewAmoeba("git@github.com:wongnat/dummy.git", "dummy-ed59cc75335f869d2378a79924332f17ca1beffa", "./dev")
     if err != nil {
         panic(err)
     }

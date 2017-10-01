@@ -1,7 +1,6 @@
 FROM golang:1.9
 
 RUN apt-get update
-RUN apt-get install -y cmake
 RUN apt-get install -y git
 RUN apt-get install -y libgit2-dev
 RUN apt-get install -y pkg-config
@@ -12,7 +11,7 @@ RUN apt-get install -y libdevmapper-dev
 WORKDIR /go/src/amoeba/
 COPY . .
 
-RUN go-wrapper download gopkg.in/yaml.v1
+RUN go-wrapper download gopkg.in/yaml.v2
 
 WORKDIR /go/src/amoeba/server/
 CMD ["go-wrapper", "run"]

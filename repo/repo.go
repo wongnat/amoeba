@@ -4,8 +4,9 @@ import (
     "os"
     "strings"
     "os/user"
-    "encoding/json"
+    "io/ioutil"
     "path/filepath"
+    "gopkg.in/yaml.v2"
     "gopkg.in/libgit2/git2go.v24"
     "github.com/jhoonb/archivex"
     "amoeba/utils"
@@ -58,13 +59,39 @@ func Archive(path string) *os.File {
     return archive
 }
 
-// Generate docker-compose.override.yml file at the given path.
-// TODO: This function is not finalized
-func OverrideCompose(path, repo, image string) {
-    file, err := os.Create(filepath.Join(path, "docker-compose.override.yml"))
+// Generate docker-compose.override.yml file in the given dir.
+func OverrideCompose(dir, repo, image string) {
+    m := make(map[string]interface{})
+
+    in, err := ioutil.ReadFile(filepath.Join(dir, "docker-compose.yml"))
     utils.CheckError(err)
 
-    _, err = file.WriteString(repo + ":\n    image: \"" + image + "\"\n")
+    err = yaml.Unmarshal(in, &m)
+    utils.CheckError(err)
+
+    for k := range m {
+        if k == repo {
+            values := m[repo].(map[interface{}]interface{})
+            values["image"] = image
+            break
+        } else if k == "services" {
+            services := m["services"].(map[interface{}]interface{})
+            values   := services[repo].(map[interface{}]interface{})
+            if values != nil {
+                values["image"] = image
+            }
+
+            break
+        }
+    }
+
+    out, err := yaml.Marshal(&m)
+    utils.CheckError(err)
+
+    file, err := os.Create(filepath.Join(dir, "docker-compose.override.yml"))
+    utils.CheckError(err)
+
+    _, err = file.Write(out)
     utils.CheckError(err)
 
     err = file.Sync()
@@ -74,21 +101,25 @@ func OverrideCompose(path, repo, image string) {
     utils.CheckError(err)
 }
 
-// Return list of client services github urls from amoeba.json file.
-// TODO: This function is not finalized
-func ParseConfig(path string) []string {
-    var jsonIn map[string]interface{}
+// Format of amoeba.yml file
+type config struct {
+    Clients []string `yaml:"clients"`
+}
+
+// Return list of client services' github ssh urls from amoeba.yml in dir.
+func ParseConfig(dir string) []string {
     var clients []string
 
-    file, err := os.Open(filepath.Join(path, "amoeba.json"))
+    c := config{}
+
+    file, err := ioutil.ReadFile(filepath.Join(dir, "amoeba.yml"))
     utils.CheckError(err)
 
-    dec := json.NewDecoder(file)
-    dec.Decode(&jsonIn)
+    err = yaml.Unmarshal(file, &c)
+    utils.CheckError(err)
 
-    tmpClients := jsonIn["clients"].([]interface{})
-    for _, c := range tmpClients {
-        clients = append(clients, c.(string))
+    for _, client := range c.Clients {
+        clients = append(clients, client)
     }
 
     return clients
@@ -114,7 +145,6 @@ func gitCred(url, username string, t git.CredType) (git.ErrorCode, *git.Cred) {
 }
 
 // Callback to validate certificates
-// TODO: this function is not finalized
 func gitCert(cert *git.Certificate, valid bool, host string) git.ErrorCode {
     return 0
 }

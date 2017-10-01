@@ -1,0 +1,10 @@
+application:
+
+infrastructure:
+
+- implement python build script to replace Makefile for windows dev
+- implement Dockerfile:
+    - mount docker daemon
+    - mount build directory so that file io is on host and not container
+    - make a Dockerfile for windows too
+- write tests

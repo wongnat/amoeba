@@ -123,7 +123,7 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
     log.Println("Received request to test: " + bid)
 
-    a, err := lib.NewAmoeba(url, bid, "./server/builds")
+    a, err := lib.NewAmoeba(url, sha, "./server/builds")
     if err != nil {
         w.Header().Set("Content-Type", "text/plain")
         w.WriteHeader(http.StatusInternalServerError)

@@ -9,7 +9,8 @@ RUN apt-get install -y libseccomp-dev
 RUN apt-get install -y btrfs-tools
 RUN apt-get install -y libdevmapper-dev
 
-VOLUME /var/run/docker.sock
+# TODO copy ssh key over
+
 WORKDIR /go/src/amoeba/
 COPY . .
 
@@ -18,6 +19,5 @@ RUN cd repo && go-wrapper download && go-wrapper install
 RUN cd utils && go-wrapper download && go-wrapper install
 RUN cd server && go-wrapper download && go-wrapper install
 
-VOLUME ["./server"]
 WORKDIR /go/src/amoeba/server/
-CMD ["go-wrapper", "run"]
+CMD ["go-wrapper", "run", "./builds", "1234", "4"]

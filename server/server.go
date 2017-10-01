@@ -23,16 +23,18 @@ var countMu sync.Mutex // mutex to control updating/testing count
 
 var upgrader = websocket.Upgrader{} // upgrade http conn to websocket
 
+var buildsDir string
+
 func main() {
     args   := os.Args
     length := len(args)
 
-    if length < 2 || length > 3 {
+    if length < 3 || length > 4 {
         log.Fatal("Error: unexpected number of arguments")
     }
 
-    if length == 3 {
-        num, err := strconv.ParseInt(args[2], 10, 64)
+    if length == 4 {
+        num, err := strconv.ParseInt(args[3], 10, 64)
         utils.CheckError(err)
         maxBuilds = num
     } else {
@@ -47,7 +49,8 @@ func main() {
     router.HandleFunc("/build/{id}/clients", handleClients)
     router.HandleFunc("/build/{id}/{client}/stdout", handleOutput)
 
-    port := args[1]
+    buildsDir = "./builds"
+    port := args[2]
     log.Println("Amoeba server listening on port " + port + " ...")
     http.ListenAndServe(":" + port, router)
 }
@@ -123,7 +126,7 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
     log.Println("Received request to test: " + bid)
 
-    a, err := lib.NewAmoeba(url, sha, "./server/builds")
+    a, err := lib.NewAmoeba(url, sha, buildsDir)
     if err != nil {
         w.Header().Set("Content-Type", "text/plain")
         w.WriteHeader(http.StatusInternalServerError)

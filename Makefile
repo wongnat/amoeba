@@ -1,5 +1,5 @@
 run-server:
-	go run ./server/server.go ./server/map.go ./server/copy.go 1234 4
+	go run ./server/server.go ./server/map.go ./server/copy.go ./server/builds 1234 4
 
 run-dev:
 	go run ./dev/dev.go
@@ -21,6 +21,6 @@ test:
 build-container:
 	docker build -t wongnat/amoeba .
 
-# TODO
+# TODO mount ssh key
 run-container:
-	docker run -d -v /var/run/docker.sock:/var/run/docker.sock wongnat/amoeba
+	docker run -d -p 1234:1234 -v /var/run/docker.sock:/var/run/docker.sock wongnat/amoeba

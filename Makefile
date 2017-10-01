@@ -23,4 +23,4 @@ build-container:
 
 # TODO
 run-container:
-	docker run -it --rm --name amoeba-test wongnat/amoeba
+	docker run -d -v /var/run/docker.sock:/var/run/docker.sock wongnat/amoeba

@@ -6,7 +6,7 @@ import (
     "fmt"
     "amoeba/repo"
     "amoeba/utils"
-    "amoeba/amoeba"
+    "amoeba/lib"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
     sha = args[2]
     dir = args[3]
 
-    a, err := amoeba.NewAmoeba(url, sha, dir)
+    a, err := lib.NewAmoeba(url, sha, dir)
     utils.CheckError(err)
     defer a.Close()
 

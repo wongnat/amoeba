@@ -1,2 +1,2 @@
-package amoeba
+package lib
 // TODO: write tests

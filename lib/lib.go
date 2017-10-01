@@ -1,4 +1,4 @@
-package amoeba
+package lib
 
 import (
     "os"

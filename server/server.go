@@ -8,7 +8,7 @@ import (
     "strconv"
     "net/http"
     "encoding/json"
-    "amoeba/amoeba"
+    "amoeba/lib"
     "amoeba/utils"
     "github.com/gorilla/websocket"
     "github.com/gorilla/mux"
@@ -16,7 +16,7 @@ import (
 
 const defaultMaxBuilds = 8
 
-var builds *outputMap  // global adt to store/serve amoeba.Output
+var builds *outputMap  // global adt to store/serve lib.Output
 var maxBuilds int64    // maximmum number of bilds that can occur
 var count int64        // current number of active builds
 var countMu sync.Mutex // mutex to control updating/testing count
@@ -123,7 +123,7 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
     log.Println("Received request to test: " + bid)
 
-    a, err := amoeba.NewAmoeba(url, bid, "./server/builds")
+    a, err := lib.NewAmoeba(url, bid, "./server/builds")
     if err != nil {
         w.Header().Set("Content-Type", "text/plain")
         w.WriteHeader(http.StatusInternalServerError)
@@ -144,7 +144,7 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
     outputs := a.Start()
 
-    val := make(map[string]amoeba.Output)
+    val := make(map[string]lib.Output)
     for _, output := range outputs {
         val[output.Name] = output
     }

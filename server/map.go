@@ -2,33 +2,33 @@ package main
 
 import (
     "sync"
-    "amoeba/amoeba"
+    "amoeba/lib"
 )
 
 // This ADT is a course-grained concurrent nested map structure specific
 // to the amoeba server. Hence, it is not exported.
 type outputMap struct {
     mu sync.Mutex
-    mp map[string]map[string]amoeba.Output
+    mp map[string]map[string]lib.Output
 }
 
 func newOutputMap() *outputMap {
     var om outputMap
-    om.mp = make(map[string]map[string]amoeba.Output)
+    om.mp = make(map[string]map[string]lib.Output)
     return &om
 }
 
-func (om *outputMap) Insert(topKey string, val map[string]amoeba.Output) {
+func (om *outputMap) Insert(topKey string, val map[string]lib.Output) {
     om.mu.Lock()
     defer om.mu.Unlock()
     om.mp[topKey] = val
 }
 
-func (om *outputMap) Load(topKey, botKey string) (amoeba.Output, bool) {
+func (om *outputMap) Load(topKey, botKey string) (lib.Output, bool) {
     om.mu.Lock()
     defer om.mu.Unlock()
 
-    var empty amoeba.Output
+    var empty lib.Output
 
     inner, ok := om.mp[topKey]
     if !ok {

@@ -42,6 +42,7 @@ func main() {
     }
 
     builds = newOutputMap()
+    buildsDir = args[1]
 
     router := mux.NewRouter()
     router.HandleFunc("/build", handleBuild)
@@ -49,7 +50,6 @@ func main() {
     router.HandleFunc("/build/{id}/clients", handleClients)
     router.HandleFunc("/build/{id}/{client}/stdout", handleOutput)
 
-    buildsDir = "./builds"
     port := args[2]
     log.Println("Amoeba server listening on port " + port + " ...")
     http.ListenAndServe(":" + port, router)

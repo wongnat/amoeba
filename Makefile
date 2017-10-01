@@ -1,5 +1,5 @@
 run-server:
-	go run ./server/server.go 1234 4
+	go run ./server/server.go ./server/map.go ./server/copy.go 1234 4
 
 run-dev:
 	go run ./dev/dev.go

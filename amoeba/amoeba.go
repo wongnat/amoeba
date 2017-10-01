@@ -16,11 +16,9 @@ import (
     "amoeba/utils"
 )
 
-// TODO: write good comments
+// TODO: implement error handling instead of just panicking
 
-const (
-    amoebaBuild = "com.amoeba.build"
-)
+const amoebaBuild = "com.amoeba.build" // Label key for docker images built
 
 // Amoeba ...
 type Amoeba struct {

@@ -7,8 +7,6 @@ import (
     "sync"
     "strconv"
     "net/http"
-    "sync/atomic"
-    "path/filepath"
     "encoding/json"
     "amoeba/amoeba"
     "amoeba/utils"
@@ -18,9 +16,9 @@ import (
 
 const defaultMaxBuilds = 8
 
-var builds outputMap   // global adt to store/serve amoeba.Output
-var maxBuilds int      // maximmum number of bilds that can occur
-var count int          // current number of active builds
+var builds *outputMap  // global adt to store/serve amoeba.Output
+var maxBuilds int64    // maximmum number of bilds that can occur
+var count int64        // current number of active builds
 var countMu sync.Mutex // mutex to control updating/testing count
 
 var upgrader = websocket.Upgrader{} // upgrade http conn to websocket
@@ -34,8 +32,9 @@ func main() {
     }
 
     if length == 3 {
-        maxBuilds, err := strconv.ParseInt(args[2], 10, 0)
+        num, err := strconv.ParseInt(args[2], 10, 64)
         utils.CheckError(err)
+        maxBuilds = num
     } else {
         maxBuilds = defaultMaxBuilds
     }
@@ -43,34 +42,46 @@ func main() {
     builds = newOutputMap()
 
     router := mux.NewRouter()
-    router.HandleFunc("/build", handleBuild) // post only
-    router.HandleFunc("/build/ids", handleIds) // json
-    router.HandleFunc("/build/{id}/clients", handleClients) // json
-    router.HandleFunc("/build/{id}/{client}/stdout", handleOutput) // websocket, plain text
+    router.HandleFunc("/build", handleBuild)
+    router.HandleFunc("/build/ids", handleIds)
+    router.HandleFunc("/build/{id}/clients", handleClients)
+    router.HandleFunc("/build/{id}/{client}/stdout", handleOutput)
 
     port := args[1]
     log.Println("Amoeba server listening on port " + port + " ...")
     http.ListenAndServe(":" + port, router)
 }
 
+// Serves json list of build ids
 func handleIds(w http.ResponseWriter, r *http.Request) {
-    buildIds := builds.TopKeys()
+    if r.Method != http.MethodGet {
+        w.WriteHeader(http.StatusBadRequest)
+        return
+    }
+
+    bids := builds.TopKeys()
     w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusOk)
-    json.NewEncoder(w).Encode(buildIds)
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(bids)
 }
 
+// Serves json list of client names given the build id
 func handleClients(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        w.WriteHeader(http.StatusBadRequest)
+        return
+    }
+
     vars := mux.Vars(r)
     id   := vars["id"]
 
     clients := builds.BotKeys(id)
     w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusOk)
+    w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(clients)
 }
 
-// Serves websocket of docker-compose stdout.
+// Serves websocket of docker-compose stdout for client repo.
 func handleOutput(w http.ResponseWriter, r *http.Request) {
     vars := mux.Vars(r)
     id   := vars["id"]
@@ -82,12 +93,12 @@ func handleOutput(w http.ResponseWriter, r *http.Request) {
     }
     defer conn.Close()
 
-    out := builds.Load(id, cli)
-    if out == nil {
+    out, ok := builds.Load(id, cli)
+    if !ok {
         return
     }
 
-    copy(conn, output.Stdout)
+    copy(conn, out.Stdout)
 }
 
 // Intended as a github push/pr event.
@@ -105,16 +116,19 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
     headCommit := jsonIn["head_commit"].(map[string]interface{})
     repository := jsonIn["repository"].(map[string]interface{})
 
-    repoName := repository["name"].(string)
-    commitID := headCommit["id"].(string)
-    sshURL   := repository["ssh_url"].(string)
+    name := repository["name"].(string)
+    sha  := headCommit["id"].(string)
+    url  := repository["ssh_url"].(string)
+    bid  := name + "-" + sha
 
-    buildID := repoName + "-" + commitID
-    log.Println("Received request to test: " + buildID)
+    log.Println("Received request to test: " + bid)
 
-    a, err := amoeba.NewAmoeba(sshURL, buildID, "./server/builds")
+    a, err := amoeba.NewAmoeba(url, bid, "./server/builds")
     if err != nil {
-        panic(err)
+        w.Header().Set("Content-Type", "text/plain")
+        w.WriteHeader(http.StatusInternalServerError)
+        io.WriteString(w, err.Error())
+        return
     }
     defer a.Close()
 
@@ -130,16 +144,14 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
     outputs := a.Start()
 
-    // Build an inner map for our outputMap
     val := make(map[string]amoeba.Output)
     for _, output := range outputs {
         val[output.Name] = output
     }
 
-    builds.Insert(buildID, val)
+    builds.Insert(bid, val)
     errs := a.Wait()
 
-    // Look for errors
     passed := true
     for _, err = range errs {
         if err != nil {
@@ -148,15 +160,17 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
         }
     }
 
+    w.Header().Set("Content-Type", "text/plain")
+    w.WriteHeader(http.StatusOK)
     if passed {
-        io.WriteString(w, "You didn't break anything! Yay!\n")
+        io.WriteString(w, "PASSED")
     } else {
-        io.WriteString(w, "You broke at least one client repo\n")
+        io.WriteString(w, "FAILED")
     }
 
     countMu.Lock()
     count--
     countMu.Unlock()
 
-    log.Println("Finished testing: " + buildID)
+    log.Println("Finished testing: " + bid)
 }

@@ -19,23 +19,25 @@ func newOutputMap() *outputMap {
 }
 
 func (om *outputMap) Insert(topKey string, val map[string]amoeba.Output) {
-    om.Lock()
-    defer om.Unlock()
+    om.mu.Lock()
+    defer om.mu.Unlock()
     om.mp[topKey] = val
 }
 
-func (om *outputMap) Load(topKey, botKey string) amoeba.Output {
+func (om *outputMap) Load(topKey, botKey string) (amoeba.Output, bool) {
     om.mu.Lock()
     defer om.mu.Unlock()
 
-    inner := om.mp[topKey]
-    if inner == nil {
-        return nil
+    var empty amoeba.Output
+
+    inner, ok := om.mp[topKey]
+    if !ok {
+        return empty, false
     }
 
-    out := inner[botKey]
-    if out == nil {
-        return nil
+    out, ok := inner[botKey]
+    if !ok {
+        return empty, false
     }
 
     delete(inner, botKey)
@@ -44,7 +46,7 @@ func (om *outputMap) Load(topKey, botKey string) amoeba.Output {
         delete(om.mp, topKey)
     }
 
-    return out
+    return out, true
 }
 
 func (om *outputMap) TopKeys() []string {
@@ -65,7 +67,7 @@ func (om *outputMap) BotKeys(topKey string) []string {
 
     inner := om.mp[topKey]
     if inner == nil {
-        return []
+        return []string{}
     }
 
     keys := make([]string, len(inner))

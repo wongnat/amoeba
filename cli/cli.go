@@ -4,9 +4,8 @@ import (
     "os"
     "io"
     "fmt"
-    "amoeba/repo"
-    "amoeba/utils"
-    "amoeba/lib"
+	"log"
+    "amoeba/amoeba"
 )
 
 func main() {
@@ -26,17 +25,26 @@ func main() {
     sha = args[2]
     dir = args[3]
 
-    a, err := lib.NewAmoeba(url, sha, dir)
-    utils.CheckError(err)
+    a, err := amoeba.NewAmoeba(url, sha, dir)
+    if err != nil {
+		log.Fatal(err)
+	}
     defer a.Close()
 
-    outputs := a.Start()
+    outputs, err := a.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
+	
     for _, output := range outputs {
         io.Copy(os.Stdout, output.Stdout)
     }
 
-    errs := a.Wait()
-
+    errs, err := a.Wait()
+	if err != nil {
+		log.Fatal(err)
+	}
+	
     passed := true
     for _, err = range errs {
         if err != nil {
@@ -45,10 +53,9 @@ func main() {
         }
     }
 
-    msg := repo.ParseName(url) + " at commit " + sha
     if passed {
-        fmt.Println(msg + " PASSED")
+        fmt.Println("PASSED")
     } else {
-        fmt.Println(msg + " FAILED")
+        fmt.Println("FAILED")
     }
 }

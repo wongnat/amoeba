@@ -1,4 +1,4 @@
-# Amoeba
+# Amoeba (Work in Progress)
 
 ### Description
 Amoeba is a web server that checks for breaking changes within a dockerized microservice architecture.

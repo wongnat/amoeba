@@ -1,54 +1,61 @@
 package main
 
 import (
-    "os"
-    "io"
-    "fmt"
-    "amoeba/repo"
-    "amoeba/utils"
-    "amoeba/lib"
+	"amoeba/amoeba"
+	"fmt"
+	"io"
+	"log"
+	"os"
 )
 
 func main() {
-    var url string
-    var sha string
-    var dir string
+	var url string
+	var sha string
+	var dir string
 
-    args := os.Args
-    n    := len(args)
+	args := os.Args
+	n := len(args)
 
-    if n != 4 {
-        fmt.Println("Usage: amoeba <build-dir> <ssh-url> <commit-sha>")
-        return
-    }
+	if n != 4 {
+		fmt.Println("Usage: amoeba <build-dir> <ssh-url> <commit-sha>")
+		return
+	}
 
-    url = args[1]
-    sha = args[2]
-    dir = args[3]
+	url = args[1]
+	sha = args[2]
+	dir = args[3]
 
-    a, err := lib.NewAmoeba(url, sha, dir)
-    utils.CheckError(err)
-    defer a.Close()
+	a, err := amoeba.NewAmoeba(url, sha, dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer a.Close()
 
-    outputs := a.Start()
-    for _, output := range outputs {
-        io.Copy(os.Stdout, output.Stdout)
-    }
+	outputs, err := a.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    errs := a.Wait()
+	for _, output := range outputs {
+		io.Copy(os.Stdout, output.Stdout)
+	}
 
-    passed := true
-    for _, err = range errs {
-        if err != nil {
-            passed = false
-            break
-        }
-    }
+	errs, err := a.Wait()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    msg := repo.ParseName(url) + " at commit " + sha
-    if passed {
-        fmt.Println(msg + " PASSED")
-    } else {
-        fmt.Println(msg + " FAILED")
-    }
+	passed := true
+	for _, err = range errs {
+		if err != nil {
+			passed = false
+			break
+		}
+	}
+
+	if passed {
+		fmt.Println("PASSED")
+	} else {
+		fmt.Println("FAILED")
+	}
 }

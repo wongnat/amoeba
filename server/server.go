@@ -8,8 +8,7 @@ import (
     "strconv"
     "net/http"
     "encoding/json"
-    "amoeba/lib"
-    "amoeba/utils"
+    "amoeba/amoeba"
     "github.com/gorilla/websocket"
     "github.com/gorilla/mux"
 )
@@ -35,7 +34,9 @@ func main() {
 
     if length == 4 {
         num, err := strconv.ParseInt(args[3], 10, 64)
-        utils.CheckError(err)
+        if err != nil {
+			log.Fatal(err)
+		}
         maxBuilds = num
     } else {
         maxBuilds = defaultMaxBuilds
@@ -126,7 +127,7 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
     log.Println("Received request to test: " + bid)
 
-    a, err := lib.NewAmoeba(url, sha, buildsDir)
+    a, err := amoeba.NewAmoeba(url, sha, buildsDir)
     if err != nil {
         w.Header().Set("Content-Type", "text/plain")
         w.WriteHeader(http.StatusInternalServerError)
@@ -145,16 +146,28 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
         countMu.Unlock()
     }
 
-    outputs := a.Start()
-
-    val := make(map[string]lib.Output)
+    outputs, err := a.Start()
+	if err != nil { // at least one user repo was setup incorrectly
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, err.Error())
+        return
+	}
+	
+    val := make(map[string]amoeba.ComposeOutput)
     for _, output := range outputs {
-        val[output.Name] = output
+        val[output.RepoName] = output
     }
 
     builds.Insert(bid, val)
-    errs := a.Wait()
-
+    errs, err := a.Wait()
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, err.Error())
+        return
+	}
+	
     passed := true
     for _, err = range errs {
         if err != nil {

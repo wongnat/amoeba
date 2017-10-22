@@ -80,7 +80,10 @@ func (a *Amoeba) Start() ([]ComposeOutput, error) {
 		return defaultOutputs, err
 	}
 
-	buildContext := archiveRepo(dest)
+	buildContext, err := archiveRepo(dest)
+	if err != nil {
+		return defaultOutputs, err
+	}
 	defer buildContext.Close()
 
 	// Build the image while setting up client repos
@@ -89,7 +92,10 @@ func (a *Amoeba) Start() ([]ComposeOutput, error) {
 		buildChan <- a.buildImage(buildContext)
 	}()
 
-	clients := parseConfig(dest)
+	clients, err := parseConfig(dest)
+	if err != nil {
+		return defaultOutputs, err
+	}
 	if err = a.setupClients(clients); err != nil {
 		os.RemoveAll(buildPath)
 		return defaultOutputs, err
@@ -171,6 +177,8 @@ func (a *Amoeba) buildImage(buildContext io.Reader) error {
 	if err != nil {
 		return err
 	}
+
+	return nil
 }
 
 // Remove the image by the given name from the docker daemon.
@@ -197,6 +205,8 @@ func (a *Amoeba) removeImage() error {
 			break // we found it
 		}
 	}
+
+	return nil
 }
 
 func (a *Amoeba) setupClients(clients []string) error {
@@ -220,7 +230,7 @@ func (a *Amoeba) setupClients(clients []string) error {
 				return
 			}
 
-			err := overrideCompose(repoPath, name, a.bid)
+			err = overrideCompose(repoPath, name, a.bid)
 			if err != nil {
 				errChan <- err
 			}

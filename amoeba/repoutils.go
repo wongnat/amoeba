@@ -52,6 +52,8 @@ func cloneRepo(url, sha, path string) error {
 			return err
 		}
 	}
+
+	return nil
 }
 
 // Returns the newly created tar archive of the repo at the given path.
@@ -125,6 +127,8 @@ func overrideCompose(dir, repo, image string) error {
 	if err != nil {
 		return err
 	}
+
+	return nil
 }
 
 // Format of amoeba.yml file
